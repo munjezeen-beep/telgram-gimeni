@@ -55,24 +55,26 @@ def load_user(user_id):
     return AdminUser(user_id) if user_id == "1" else None
 
 # --- 3. إدارة قاعدة البيانات (Database Manager - Postgres Version) ---
+import psycopg2
+from psycopg2.extras import DictCursor
+
 class DBManager:
     def __init__(self):
-        self.db_url = DATABASE_URL
+        # جلب الرابط من متغيرات البيئة وتصحيحه فوراً
+        url = os.environ.get("DATABASE_URL")
+        if url and url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        self.db_url = url
         self._init_db()
 
     def get_connection(self):
-        # تصحيح بروتوكول الرابط ليتوافق مع psycopg2
-        url = self.db_url
-        if url and url.startswith("postgres://"):
-            url = url.replace("postgres://", "postgresql://", 1)
-        
-        # الاتصال بـ Postgres
-        return psycopg2.connect(url, cursor_factory=DictCursor)
+        # الاتصال بـ Postgres مع استخدام DictCursor لتسهيل قراءة البيانات كقاموس
+        return psycopg2.connect(self.db_url, cursor_factory=DictCursor)
 
     def _init_db(self):
         with self.get_connection() as conn:
             with conn.cursor() as cur:
-                # جدول الحسابات
+                # 1. إنشاء جدول الحسابات
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS accounts (
                         phone TEXT PRIMARY KEY,
@@ -84,19 +86,52 @@ class DBManager:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
-                # جدول الكلمات المفتاحية
+                
+                # 2. جدول الكلمات المفتاحية
                 cur.execute('CREATE TABLE IF NOT EXISTS keywords (keyword TEXT PRIMARY KEY)')
-                # جدول الإعدادات
+                
+                # 3. جدول الإعدادات
                 cur.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)')
                 
-                # إعداد بيانات المدير الافتراضية
-                cur.execute("SELECT value FROM settings WHERE key='admin_email'")
-                if not cur.fetchone():
-                    hashed_pass = generate_password_hash(DEFAULT_ADMIN_PASS)
-                    cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s)", ('admin_email', DEFAULT_ADMIN_EMAIL))
-                    cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s)", ('admin_password', hashed_pass))
-                    cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s)", ('ai_enabled', '0'))
-                    cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s)", ('openrouter_api_key', ''))
+                # 4. إعداد بيانات المدير والإعدادات الافتراضية (استخدام ON CONFLICT لمنع التكرار)
+                admin_email = os.environ.get("ADMIN_EMAIL", "admin@gmail.com")
+                admin_pass = generate_password_hash(os.environ.get("ADMIN_PASSWORD", "123456"))
+                
+                default_settings = [
+                    ('admin_email', admin_email),
+                    ('admin_password', admin_pass),
+                    ('ai_enabled', '0'),
+                    ('openrouter_api_key', '')
+                ]
+                
+                for key, value in default_settings:
+                    cur.execute("""
+                        INSERT INTO settings (key, value) 
+                        VALUES (%s, %s) 
+                        ON CONFLICT (key) DO NOTHING
+                    """, (key, value))
+                    
+            conn.commit()
+
+    # دالة مساعدة لجلب إعداد معين بسهولة
+    def get_setting(self, key, default=None):
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT value FROM settings WHERE key=%s", (key,))
+                    row = cur.fetchone()
+                    return row[0] if row else default
+        except:
+            return default
+
+    # دالة مساعدة لتحديث إعداد معين
+    def set_setting(self, key, value):
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO settings (key, value) VALUES (%s, %s)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                """, (key, str(value)))
             conn.commit()
 
     def get_setting(self, key, default=""):
