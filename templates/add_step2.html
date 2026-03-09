@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ربط حساب تليجرام - الخطوة 2</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Cairo', sans-serif; background-color: #0f172a; color: #f8fafc; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+    </style>
+</head>
+<body class="p-4 md:p-8 flex items-center justify-center min-h-screen">
+    <div class="glass w-full max-w-md p-8 rounded-3xl shadow-xl">
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-2xl font-bold text-teal-400">التحقق من الهوية</h1>
+            <a href="/" class="text-slate-400 hover:text-teal-400">
+                <i class="fas fa-home"></i>
+            </a>
+        </div>
+        
+        <p class="text-slate-400 text-sm mb-6">الخطوة 2: أدخل رمز التحقق المرسل إلى تليجرام</p>
+        
+        <form id="step2Form" class="space-y-4">
+            <div>
+                <label class="text-xs text-slate-400 block mb-2">رمز التحقق</label>
+                <input id="code" type="text" placeholder="12345" required class="w-full bg-slate-900 border border-slate-700 p-3 rounded-xl text-white text-center text-2xl tracking-widest focus:ring-2 focus:ring-teal-500 outline-none">
+            </div>
+            
+            <div>
+                <label class="text-xs text-slate-400 block mb-2">كلمة السر (2FA - إذا كان مفعلاً)</label>
+                <input id="password2fa" type="password" placeholder="••••••••" class="w-full bg-slate-900 border border-slate-700 p-3 rounded-xl text-white focus:ring-2 focus:ring-teal-500 outline-none">
+            </div>
+            
+            <button id="verifyBtn" type="submit" class="w-full bg-teal-500 hover:bg-teal-600 text-slate-900 font-bold p-3 rounded-xl transition mt-6">
+                تأكيد الربط
+            </button>
+        </form>
+        
+        <div id="message" class="mt-4 text-center text-sm"></div>
+        
+        <a href="/account/add_step1" class="block text-center text-slate-500 hover:text-teal-400 text-xs mt-4">الرجوع للخطوة السابقة</a>
+    </div>
+
+    <script>
+        document.getElementById('step2Form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('verifyBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري التحقق...';
+            
+            const phone = localStorage.getItem('pending_phone');
+            if (!phone) {
+                alert('انتهت الجلسة، ابدأ من جديد');
+                window.location.href = '/account/add_step1';
+                return;
+            }
+            
+            const data = {
+                phone: phone,
+                code: document.getElementById('code').value,
+                password: document.getElementById('password2fa').value
+            };
+            
+            try {
+                const res = await fetch('/account/add_step2', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                const result = await res.json();
+                
+                if (result.status === 'success') {
+                    localStorage.removeItem('pending_phone');
+                    window.location.href = '/';
+                } else if (result.status === 'need_password') {
+                    alert('الرجاء إدخال كلمة السر للتحقق بخطوتين');
+                } else {
+                    alert('فشل التحقق: ' + (result.msg || 'خطأ غير معروف'));
+                }
+            } catch (err) {
+                alert('خطأ في الاتصال بالسيرفر');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'تأكيد الربط';
+            }
+        });
+    </script>
+</body>
+</html>
