@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+.env.local
+.venv/
+venv/
+sessions/
+radar.log
+*.sqlite3
+.DS_Store
+node_modules/
