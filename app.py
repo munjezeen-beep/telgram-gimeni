@@ -1,6 +1,6 @@
 # ================================================================
-# نظام رادار تليجرام الذكي v4.0 (Cloud Edition - PostgreSQL)
-# المبرمج: Gemini - المشروع: رادار الخليج للذكاء الاصطناعي
+# نظام رادار الخليج الذكي v5.0 (نسخة الإنتاج الشاملة)
+# متوافق تماماً مع PostgreSQL و Railway و Nixpacks
 # ================================================================
 
 import os
@@ -9,6 +9,7 @@ import json
 import asyncio
 import logging
 import aiohttp
+import secrets
 from datetime import datetime
 from threading import Thread
 from functools import wraps
@@ -26,26 +27,23 @@ from telethon.sessions import StringSession
 import psycopg2
 from psycopg2.extras import DictCursor
 
-# --- 1. إعداد السجلات (Logging) ---
+# --- 1. إعدادات السجلات والبيئة ---
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger("RadarSystem")
+logger = logging.getLogger("RadarPro_V5")
 
-# --- 2. إعدادات بيئة العمل (Environment Variables) ---
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(24))
+
+# إعدادات قاعدة البيانات
 DATABASE_URL = os.environ.get("DATABASE_URL")
-SECRET_KEY = os.environ.get("SECRET_KEY", "radar-secret-2026")
-PORT = int(os.environ.get("PORT", 8080))
 
-# إعدادات الأدمن الافتراضية
-DEFAULT_ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@gmail.com")
-DEFAULT_ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "123456")
-
-# --- 3. محرك قاعدة البيانات (PostgreSQL Manager) ---
+# --- 2. محرك قاعدة البيانات المتقدم (Postgres Manager) ---
 class DBManager:
     def __init__(self):
-        # تصحيح بروتوكول الرابط ليتوافق مع psycopg2
+        # تصحيح الرابط لـ PostgreSQL
         url = DATABASE_URL
         if url and url.startswith("postgres://"):
             url = url.replace("postgres://", "postgresql://", 1)
@@ -53,14 +51,15 @@ class DBManager:
         self._init_db()
 
     def get_connection(self):
+        """إنشاء اتصال جديد بقاعدة البيانات"""
         return psycopg2.connect(self.db_url, cursor_factory=DictCursor)
 
     def _init_db(self):
-        """إنشاء الجداول اللازمة إذا لم تكن موجودة"""
+        """تهيئة الجداول بنظام Postgres"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
-                    # جدول الحسابات
+                    # جدول الحسابات المراقبِة
                     cur.execute('''
                         CREATE TABLE IF NOT EXISTS accounts (
                             phone TEXT PRIMARY KEY,
@@ -74,220 +73,210 @@ class DBManager:
                     ''')
                     # جدول الكلمات المفتاحية
                     cur.execute('CREATE TABLE IF NOT EXISTS keywords (keyword TEXT PRIMARY KEY)')
-                    # جدول الإعدادات العامة
+                    # جدول الإعدادات العامة للسيستم
                     cur.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)')
-                    # جدول السجلات (Logs)
+                    # جدول سجلات النشاط (Logs)
                     cur.execute('''
-                        CREATE TABLE IF NOT EXISTS activity_logs (
+                        CREATE TABLE IF NOT EXISTS logs (
                             id SERIAL PRIMARY KEY,
                             content TEXT,
-                            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                            log_type TEXT DEFAULT 'info',
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         )
                     ''')
                     
-                    # إدخال البيانات الافتراضية
-                    cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT DO NOTHING", 
-                               ('admin_email', DEFAULT_ADMIN_EMAIL))
-                    cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT DO NOTHING", 
-                               ('admin_password', generate_password_hash(DEFAULT_ADMIN_PASS)))
+                    # إدخال الإعدادات الافتراضية إذا لم تكن موجودة
+                    admin_mail = os.environ.get("ADMIN_EMAIL", "admin@gmail.com")
+                    admin_pass = generate_password_hash(os.environ.get("ADMIN_PASSWORD", "123456"))
+                    
+                    cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT DO NOTHING", ('admin_email', admin_mail))
+                    cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT DO NOTHING", ('admin_password', admin_pass))
                     cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT DO NOTHING", ('ai_enabled', '0'))
-                    cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT DO NOTHING", ('openrouter_api_key', ''))
+                    cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT DO NOTHING", ('openrouter_key', ''))
+                    
                 conn.commit()
-            logger.info("تم تهيئة قاعدة البيانات بنجاح.")
+            logger.info("قاعدة البيانات جاهزة للعمل.")
         except Exception as e:
             logger.error(f"خطأ في تهيئة قاعدة البيانات: {e}")
 
-    def log_activity(self, content):
+    def add_log(self, content, l_type='info'):
+        """إضافة سجل للوحة التحكم"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("INSERT INTO activity_logs (content) VALUES (%s)", (content,))
+                    cur.execute("INSERT INTO logs (content, log_type) VALUES (%s, %s)", (content, l_type))
                 conn.commit()
-        except: pass
+        except Exception as e:
+            logger.error(f"خطأ في إضافة السجل: {e}")
 
 db = DBManager()
 
-# --- 4. إعداد تطبيق Flask و Flask-Login ---
-app = Flask(__name__)
-app.secret_key = SECRET_KEY
-
-login_manager = LoginManager()
-login_manager.init_app(app)
+# --- 3. نظام إدارة المستخدمين (Authentication) ---
+login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 class User(UserMixin):
-    def __init__(self, id):
-        self.id = id
+    def __init__(self, id): self.id = id
 
 @login_manager.user_loader
-def load_user(user_id):
-    return User(user_id)
+def load_user(user_id): return User(user_id)
 
-# --- 5. محرك تليجرام المتقدم (Telegram Engine) ---
+# --- 4. محرك تليجرام العملاق (Telegram Radar Engine) ---
 class TelegramEngine:
     def __init__(self):
         self.loop = asyncio.new_event_loop()
-        self.clients = {}  # {phone: client_object}
-        self.temp_clients = {} # لتخزين الكليانت أثناء مرحلة التسجيل
+        self.clients = {}  # {phone: client_instance}
+        self.temp_sessions = {} # للتخزين المؤقت أثناء تسجيل الدخول
         self.is_running = False
-        # بدء حلقة الأحداث في خيط منفصل
-        self.thread = Thread(target=self._run_event_loop, daemon=True)
-        self.thread.start()
+        
+        # بدء حلقة الأحداث في خيط منفصل لضمان عدم توقف Flask
+        Thread(target=self._run_event_loop, daemon=True).start()
 
     def _run_event_loop(self):
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
-    def run_coroutine(self, coro):
-        return asyncio.run_coroutine_threadsafe(coro, self.loop).result()
-
-    async def start_all(self):
-        """تشغيل جميع الحسابات المفعلة عند بدء التطبيق"""
+    async def start_all_clients(self):
+        """تنشيط كافة الحسابات المحفوظة في قاعدة البيانات"""
         with db.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM accounts WHERE enabled = 1")
-                accounts = cur.fetchall()
-                for acc in accounts:
-                    if acc['session_str']:
-                        await self.activate_client(acc)
+                rows = cur.fetchall()
+                for row in rows:
+                    if row['session_str']:
+                        await self.connect_client(row)
 
-    async def activate_client(self, acc):
-        """تنشيط عميل تليجرام واحد"""
-        phone = acc['phone']
+    async def connect_client(self, acc_data):
+        """ربط حساب تليجرام واحد بالرادار"""
+        phone = acc_data['phone']
         try:
             client = TelegramClient(
-                StringSession(acc['session_str']), 
-                acc['api_id'], 
-                acc['api_hash'],
-                device_model="RadarCloud-v4",
-                system_version="Linux"
+                StringSession(acc_data['session_str']), 
+                acc_data['api_id'], 
+                acc_data['api_hash']
             )
             await client.connect()
+            
             if await client.is_user_authorized():
                 self.clients[phone] = client
-                self._attach_handlers(client, acc)
-                logger.info(f"تم تنشيط الرادار للحساب: {phone}")
-                db.log_activity(f"تنشيط الحساب: {phone}")
+                # إعداد مستمع الرسائل
+                self._setup_event_handlers(client, acc_data)
+                db.add_log(f"تم ربط الحساب بنجاح: {phone}")
+                logger.info(f"حساب {phone} مفعل الآن.")
             else:
-                logger.warning(f"الجلسة منتهية للحساب: {phone}")
+                db.add_log(f"الجلسة منتهية للحساب: {phone}", "warning")
+                logger.warning(f"حساب {phone} يتطلب تسجيل دخول جديد.")
         except Exception as e:
-            logger.error(f"فشل تنشيط الحساب {phone}: {e}")
+            logger.error(f"فشل ربط الحساب {phone}: {e}")
 
-    def _attach_handlers(self, client, acc):
-        """إضافة مستمع الرسائل لكل حساب"""
+    def _setup_event_handlers(self, client, acc_data):
+        """إضافة مستمعات الأحداث للحساب"""
         @client.on(events.NewMessage)
-        async def my_handler(event):
-            if not event.is_private and not event.is_group: return
-            await self.analyze_message(event, acc)
+        async def message_handler(event):
+            await self.process_incoming_message(event, acc_data)
 
-    async def analyze_message(self, event, acc):
+    async def process_incoming_message(self, event, acc_data):
         """تحليل الرسائل الواردة بناءً على الكلمات المفتاحية"""
-        text = event.raw_text
-        if not text: return
-
+        if not event.raw_text: return
+        
+        # جلب الكلمات المفتاحية الحالية
         with db.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT keyword FROM keywords")
-                keywords = [r['keyword'] for r in cur.fetchall()]
+                keywords = [r['keyword'].lower() for r in cur.fetchall()]
         
-        # البحث عن تطابق
-        match = False
-        matched_word = ""
+        message_text = event.raw_text.lower()
+        
         for kw in keywords:
-            if re.search(rf'\b{re.escape(kw)}\b', text, re.IGNORECASE):
-                match = True
-                matched_word = kw
+            # استخدام Regex للبحث الدقيق عن الكلمات
+            if re.search(rf'\b{re.escape(kw)}\b', message_text):
+                await self.dispatch_alert(event, acc_data, kw)
                 break
-        
-        if match:
-            await self.send_alert(event, acc, matched_word)
 
-    async def send_alert(self, event, acc, word):
-        """إرسال تنبيه لمجموعة التلجرام المحددة"""
+    async def dispatch_alert(self, event, acc_data, matched_keyword):
+        """إرسال تنبيه مفصل لمجموعة الإشعارات"""
         try:
+            chat = await event.get_chat()
+            chat_title = getattr(chat, 'title', 'محادثة خاصة')
             sender = await event.get_sender()
             sender_name = getattr(sender, 'first_name', 'مجهول')
-            chat = await event.get_chat()
-            chat_title = getattr(chat, 'title', 'دردشة خاصة')
             
-            alert_msg = (
-                f"🚨 **تنبيه الرادار الذكي**\n"
+            # تنسيق الرسالة
+            alert_text = (
+                f"🌟 **تم رصد تطابق جديد!**\n"
                 f"━━━━━━━━━━━━━━\n"
-                f"🔍 **الكلمة المكتشفة:** `{word}`\n"
+                f"🔑 **الكلمة:** `{matched_keyword}`\n"
+                f"📡 **المصدر:** {chat_title}\n"
                 f"👤 **المرسل:** {sender_name}\n"
-                f"📍 **المصدر:** {chat_title}\n"
-                f"📱 **الحساب المراقب:** {acc['phone']}\n"
-                f"💬 **النص:**\n{event.raw_text[:200]}...\n"
+                f"📱 **عبر حساب:** {acc_data['phone']}\n\n"
+                f"💬 **النص المكتشف:**\n_{event.raw_text[:250]}..._\n"
                 f"━━━━━━━━━━━━━━\n"
-                f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                f"⏰ {datetime.now().strftime('%H:%M:%S')}"
             )
             
-            # إرسال التنبيه
-            target_client = self.clients.get(acc['phone'])
-            if target_client and acc['alert_group']:
-                await target_client.send_message(acc['alert_group'], alert_msg)
-                db.log_activity(f"تم إرسال تنبيه بكلمة ({word}) من حساب {acc['phone']}")
+            # إرسال التنبيه للمجموعة المحددة لهذا الحساب
+            if acc_data['alert_group']:
+                await self.clients[acc_data['phone']].send_message(acc_data['alert_group'], alert_text)
+                db.add_log(f"تنبيه: تم العثور على '{matched_keyword}' من {acc_data['phone']}")
         except Exception as e:
             logger.error(f"خطأ في إرسال التنبيه: {e}")
 
-    # --- عمليات تسجيل الحسابات الجديدة (Login Flow) ---
-    async def request_code(self, phone, api_id, api_hash):
+    # --- عمليات تسجيل الدخول ---
+    async def init_login(self, phone, api_id, api_hash):
         try:
             client = TelegramClient(StringSession(), int(api_id), api_hash)
             await client.connect()
             sent = await client.send_code_request(phone)
-            self.temp_clients[phone] = {
+            self.temp_sessions[phone] = {
                 'client': client,
-                'phone_code_hash': sent.phone_code_hash,
+                'hash': sent.phone_code_hash,
                 'api_id': api_id,
                 'api_hash': api_hash
             }
-            return {"success": True}
+            return {"status": "success"}
         except Exception as e:
-            return {"success": False, "message": str(e)}
+            return {"status": "error", "msg": str(e)}
 
-    async def verify_code(self, phone, code, password=None):
-        if phone not in self.temp_clients:
-            return {"success": False, "message": "انتهت الجلسة المؤقتة"}
+    async def complete_login(self, phone, code, password=None):
+        if phone not in self.temp_sessions:
+            return {"status": "error", "msg": "انتهت مهلة الجلسة، حاول مجدداً."}
         
-        data = self.temp_clients[phone]
+        data = self.temp_sessions[phone]
         client = data['client']
+        
         try:
-            await client.sign_in(phone, code, phone_code_hash=data['phone_code_hash'])
+            await client.sign_in(phone, code, phone_code_hash=data['hash'])
         except errors.SessionPasswordNeededError:
             if not password:
-                return {"success": False, "needs_password": True}
+                return {"status": "needs_password"}
             await client.sign_in(password=password)
         except Exception as e:
-            return {"success": False, "message": str(e)}
-
-        # نجاح تسجيل الدخول - حفظ الجلسة
+            return {"status": "error", "msg": str(e)}
+        
+        # حفظ الجلسة في قاعدة البيانات
         session_str = client.session.save()
         with db.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute('''
-                    INSERT INTO accounts (phone, api_id, api_hash, session_str)
+                    INSERT INTO accounts (phone, api_id, api_hash, session_str) 
                     VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (phone) DO UPDATE SET 
-                    session_str = EXCLUDED.session_str, 
-                    api_id = EXCLUDED.api_id, 
-                    api_hash = EXCLUDED.api_hash
+                    ON CONFLICT (phone) DO UPDATE SET session_str = EXCLUDED.session_str
                 ''', (phone, data['api_id'], data['api_hash'], session_str))
             conn.commit()
-        
-        # تفعيل الحساب فوراً
-        acc_data = {
+            
+        # تشغيل الرادار فوراً لهذا الحساب
+        await self.connect_client({
             'phone': phone, 'api_id': data['api_id'], 
             'api_hash': data['api_hash'], 'session_str': session_str,
             'alert_group': None, 'enabled': 1
-        }
-        await self.activate_client(acc_data)
-        del self.temp_clients[phone]
-        return {"success": True}
+        })
+        
+        del self.temp_sessions[phone]
+        return {"status": "success"}
 
-telegram_engine = TelegramEngine()
+radar_engine = TelegramEngine()
 
-# --- 6. واجهة الويب (Flask Routes) ---
+# --- 5. مسارات الويب واجهة الإدارة (Web Routes) ---
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -302,11 +291,10 @@ def login():
                 admin_pass = cur.fetchone()[0]
                 
                 if email == admin_email and check_password_hash(admin_pass, password):
-                    user = User(email)
-                    login_user(user)
+                    login_user(User(email))
                     return redirect(url_for('dashboard'))
-        flash("خطأ في بيانات الدخول")
-    return render_template('login.html') # سيتم توفيره في رد لاحق أو مدمج
+        flash("فشل تسجيل الدخول، تأكد من البيانات.")
+    return render_template('login.html') # واجهة الدخول
 
 @app.route('/')
 @login_required
@@ -317,95 +305,90 @@ def dashboard():
             accounts = cur.fetchall()
             cur.execute("SELECT * FROM keywords")
             keywords = [r['keyword'] for r in cur.fetchall()]
-            cur.execute("SELECT * FROM activity_logs ORDER BY timestamp DESC LIMIT 10")
-            logs = cur.fetchall()
+            cur.execute("SELECT * FROM logs ORDER BY created_at DESC LIMIT 20")
+            recent_logs = cur.fetchall()
             cur.execute("SELECT value FROM settings WHERE key='ai_enabled'")
             ai_status = cur.fetchone()[0]
-    return render_template('index.html', accounts=accounts, keywords=keywords, logs=logs, ai_status=ai_status)
+    return render_template('index.html', accounts=accounts, keywords=keywords, logs=recent_logs, ai_status=ai_status)
 
-@app.route('/add_account', methods=['POST'])
+# مسارات إدارة الكلمات المفتاحية
+@app.route('/keyword/add', methods=['POST'])
 @login_required
-def add_account():
-    phone = request.form.get('phone')
-    api_id = request.form.get('api_id')
-    api_hash = request.form.get('api_hash')
-    res = telegram_engine.run_coroutine(telegram_engine.request_code(phone, api_id, api_hash))
-    if res['success']:
-        return jsonify({"status": "code_sent", "phone": phone})
-    return jsonify({"status": "error", "message": res['message']})
+def add_keyword():
+    kw = request.form.get('keyword', '').strip()
+    if kw:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO keywords (keyword) VALUES (%s) ON CONFLICT DO NOTHING", (kw,))
+            conn.commit()
+    return redirect(url_for('dashboard'))
 
-@app.route('/verify_step', methods=['POST'])
+@app.route('/keyword/delete/<kw>')
 @login_required
-def verify_step():
-    phone = request.form.get('phone')
-    code = request.form.get('code')
-    password = request.form.get('password')
-    res = telegram_engine.run_coroutine(telegram_engine.verify_code(phone, code, password))
+def delete_keyword(kw):
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM keywords WHERE keyword = %s", (kw,))
+        conn.commit()
+    return redirect(url_for('dashboard'))
+
+# مسارات إدارة الحسابات
+@app.route('/account/add_step1', methods=['POST'])
+@login_required
+def add_account_step1():
+    data = request.json
+    res = asyncio.run_coroutine_threadsafe(
+        radar_engine.init_login(data['phone'], data['api_id'], data['api_hash']), 
+        radar_engine.loop
+    ).result()
     return jsonify(res)
 
-@app.route('/delete_account/<phone>')
+@app.route('/account/add_step2', methods=['POST'])
+@login_required
+def add_account_step2():
+    data = request.json
+    res = asyncio.run_coroutine_threadsafe(
+        radar_engine.complete_login(data['phone'], data['code'], data.get('password')), 
+        radar_engine.loop
+    ).result()
+    return jsonify(res)
+
+@app.route('/account/delete/<phone>')
 @login_required
 def delete_account(phone):
     with db.get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM accounts WHERE phone = %s", (phone,))
         conn.commit()
-    if phone in telegram_engine.clients:
-        # محاولة إغلاق العميل برفق
-        client = telegram_engine.clients.pop(phone)
-        telegram_engine.run_coroutine(client.disconnect())
+    
+    if phone in radar_engine.clients:
+        asyncio.run_coroutine_threadsafe(radar_engine.clients[phone].disconnect(), radar_engine.loop)
+        del radar_engine.clients[phone]
+        
     flash(f"تم حذف الحساب {phone}")
     return redirect(url_for('dashboard'))
 
-@app.route('/update_alert_group', methods=['POST'])
+@app.route('/account/update_group', methods=['POST'])
 @login_required
-def update_alert_group():
+def update_group():
     phone = request.form.get('phone')
-    group = request.form.get('group')
+    group_id = request.form.get('group_id')
     with db.get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("UPDATE accounts SET alert_group = %s WHERE phone = %s", (group, phone))
+            cur.execute("UPDATE accounts SET alert_group = %s WHERE phone = %s", (group_id, phone))
         conn.commit()
     return redirect(url_for('dashboard'))
-
-@app.route('/manage_keywords', methods=['POST'])
-@login_required
-def manage_keywords():
-    action = request.form.get('action')
-    word = request.form.get('keyword', '').strip()
-    if not word: return redirect(url_for('dashboard'))
-    
-    with db.get_connection() as conn:
-        with conn.cursor() as cur:
-            if action == 'add':
-                cur.execute("INSERT INTO keywords (keyword) VALUES (%s) ON CONFLICT DO NOTHING", (word,))
-            elif action == 'delete':
-                cur.execute("DELETE FROM keywords WHERE keyword = %s", (word,))
-        conn.commit()
-    return redirect(url_for('dashboard'))
-
-@app.route('/toggle_ai', methods=['POST'])
-@login_required
-def toggle_ai():
-    status = request.form.get('status') # '1' or '0'
-    with db.get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE settings SET value = %s WHERE key = 'ai_enabled'", (status,))
-        conn.commit()
-    return jsonify({"success": True})
 
 @app.route('/logout')
 def logout():
     logout_user()
     return redirect(url_for('login'))
 
-# --- 7. تشغيل النظام ---
+# --- 6. تشغيل النظام النهائي ---
 if __name__ == '__main__':
-    # تهيئة أولية عند التشغيل
-    try:
-        telegram_engine.run_coroutine(telegram_engine.start_all())
-    except Exception as e:
-        logger.error(f"خطأ في بدء حسابات تليجرام: {e}")
+    # تشغيل الرادار عند بدء السيرفر
+    asyncio.run_coroutine_threadsafe(radar_engine.start_all_clients(), radar_engine.loop)
     
-    # تشغيل Flask
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    # تشغيل تطبيق الويب
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
