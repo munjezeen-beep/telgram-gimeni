@@ -1,7 +1,13 @@
+# الأساسيات
 Flask==3.0.0
 Flask-Login==0.6.3
+Werkzeug==3.0.1
+gunicorn==21.2.0
+
+# تليجرام والشبكة
 Telethon==1.37.0
 aiohttp==3.9.1
-gunicorn==21.2.0
-Werkzeug==3.0.1
+cryptography==41.0.7
+
+# قاعدة البيانات (Postgres)
 psycopg2-binary==2.9.9
