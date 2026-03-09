@@ -284,9 +284,11 @@ async def classify_message_openrouter(text, api_key):
                 choices = data.get("choices") or []
                 content = ""
                 if choices:
-                    content = choices[0].get("message",{}).get("content","") or choices[0].get("text","")
+                    content = choices[0].get("message",{}).get("content","") or choices[0].get("text",
+                                                                                                     "")
                 else:
-                    content = data.get("text","")
+                    content = data.get("text",
+                                       "")
                 m = re.search(r'\{.*\}', content, re.DOTALL)
                 if m:
                     try:
@@ -522,7 +524,7 @@ def index():
         cur.execute("SELECT content, created_at FROM logs ORDER BY created_at DESC LIMIT 100")
         logs = [{"content":r[0],"created_at":r[1]} for r in cur.fetchall()]
         cur.execute("SELECT key, value FROM settings")
-        settings = {r[0]:r[1] for r in cur.fetchall()}
+        settings = {r[0]:r[1] for r in cur.fetchall()]
         cur.close()
         return render_template("index.html", keywords="\n".join(keywords), accounts=accounts, logs=logs, settings=settings, active_clients=list(radar_engine.clients.keys()))
     except Exception as e:
