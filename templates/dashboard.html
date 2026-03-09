@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة التحكم</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Cairo', sans-serif; background-color: #0f172a; color: #f8fafc; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+    <div class="max-w-7xl mx-auto">
+        <header class="flex justify-between items-center mb-10 bg-slate-800/50 p-6 rounded-3xl border border-slate-700">
+            <div>
+                <h1 class="text-3xl font-bold text-white">لوحة التحكم</h1>
+                <p class="text-slate-400 text-sm">مرحباً بك في رادار الخليج</p>
+            </div>
+            <div class="flex gap-4">
+                <a href="/account/add_step1" class="bg-teal-500 hover:bg-teal-600 text-slate-900 px-4 py-2 rounded-xl font-bold transition">
+                    <i class="fas fa-plus"></i> ربط حساب جديد
+                </a>
+                <a href="/logout" class="text-slate-400 hover:text-red-400 transition">
+                    <i class="fas fa-sign-out-alt"></i> خروج
+                </a>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div class="lg:col-span-2 glass p-6 rounded-3xl">
+                <h2 class="text-xl font-bold text-teal-400 mb-4">الحسابات المتصلة</h2>
+                <div id="accountsList" class="space-y-3">
+                    <p class="text-slate-500 text-center py-8">جاري التحميل...</p>
+                </div>
+            </div>
+
+            <div class="glass p-6 rounded-3xl">
+                <h2 class="text-xl font-bold text-teal-400 mb-4">الإحصائيات</h2>
+                <div class="space-y-4">
+                    <div class="bg-slate-800/50 p-4 rounded-xl">
+                        <p class="text-slate-400 text-xs">الحسابات النشطة</p>
+                        <p id="activeCount" class="text-2xl font-bold text-teal-400">0</p>
+                    </div>
+                    <div class="bg-slate-800/50 p-4 rounded-xl">
+                        <p class="text-slate-400 text-xs">حالة الرادار</p>
+                        <p class="text-lg font-bold text-green-400" id="radarStatus">✅ نشط</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function loadAccounts() {
+            try {
+                const res = await fetch('/api/accounts');
+                const data = await res.json();
+                const list = document.getElementById('accountsList');
+                
+                if (data.accounts && data.accounts.length > 0) {
+                    list.innerHTML = data.accounts.map(acc => `
+                        <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <p class="font-bold">${acc.phone}</p>
+                                    <p class="text-xs text-slate-500">مجموعة: ${acc.alert_group || 'لم تحدد'}</p>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <span class="px-3 py-1 rounded-full text-xs font-bold ${acc.enabled ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}">
+                                        ${acc.enabled ? '✅ نشط' : '❌ متوقف'}
+                                    </span>
+                                    <a href="/account/delete/${acc.phone}" onclick="return confirm('هل أنت متأكد من حذف هذا الحساب؟')" class="text-red-400 hover:text-red-300">
+                                        <i class="fas fa-trash-alt"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+                    document.getElementById('activeCount').textContent = data.accounts.filter(a => a.enabled).length;
+                } else {
+                    list.innerHTML = '<p class="text-center text-slate-500 py-8">لم يتم ربط أي حسابات بعد</p>';
+                }
+            } catch (e) {
+                document.getElementById('accountsList').innerHTML = '<p class="text-red-400 text-center">خطأ في تحميل البيانات</p>';
+            }
+        }
+
+        loadAccounts();
+        setInterval(loadAccounts, 5000);
+    </script>
+</body>
+</html>
